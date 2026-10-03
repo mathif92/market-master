@@ -169,5 +169,14 @@ services:
       logistics:
         condition: service_started
 
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/web.Dockerfile
+    restart: unless-stopped
+    ports: ["8089:80"]
+    depends_on:
+      - gateway
+
 volumes:
   pgdata:

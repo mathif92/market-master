@@ -17,9 +17,12 @@ make vet      # go vet ./...
 make lint     # buf lint + golangci-lint (or vet fallback)
 make proto    # regenerate gRPC code after editing api/proto/**.proto
 make fmt      # gofmt + go mod tidy
-make up       # docker compose (Postgres, Kafka, services)
+make up       # docker compose (Postgres, Kafka, services, web)
 make smoke    # scripts/e2e.sh — full order → pay → dispatch flow
 make down     # compose down -v
+make web-dev  # Vite dev server :5173 (proxies /v1 → gateway :8080)
+make web      # build + serve SPA image on :8089 (nginx → gateway)
+make web-build # tsc + vite bundle into web/dist
 ```
 
 Go ≥ 1.26 (franz-go requirement; toolchain auto-downloads).
@@ -37,8 +40,10 @@ pkg/                    shared building blocks (see below)
 services/<name>/cmd/server      binary entrypoint
 services/<name>/internal        store/ + api/ + consumer/ per service
 services/<name>/migrations      embed.FS SQL, applied in lexical order
+web/                            React SPA: shop (/) + market admin (/admin)
 deploy/docker-compose.yml       local stack (KRaft Kafka, Postgres 16)
 deploy/Dockerfile               one image, SERVICE build-arg picks binary
+deploy/web.Dockerfile           SPA build → nginx, /v1 → gateway
 docs/adr/                      architecture decision records
 scripts/e2e.sh                 smoke test
 ```
@@ -100,6 +105,8 @@ partition count (12).
   and cancellation.
 - When adding a consumer: cover replay (same event twice) and an
   illegal-transition case.
+- Web app: `make web-build` (strict tsc + vite) and `make web-lint`
+  (oxlint) must pass.
 
 ## Deployment note (future)
 

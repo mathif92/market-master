@@ -31,11 +31,38 @@ Built as Go microservices with an event-driven core around a Kafka
 ## Quickstart
 
 ```bash
-make up      # docker compose: Postgres, Kafka (KRaft), 6 services
+make up      # docker compose: Postgres, Kafka (KRaft), 6 services, web (:8089)
 make smoke   # end-to-end: tenant → catalog → order → pay → dispatch → deliver
 make logs    # follow logs
 make down    # tear down (incl. volumes)
 ```
+
+## Web app (React)
+
+Single SPA in `web/` — customer storefront (`/`) + market admin (`/admin`,
+requires `tenant_admin`/`staff`). Vite + React 19 + TS + Tailwind v4 +
+TanStack Query, shadcn-style UI on Radix.
+
+```bash
+cd web && npm install
+
+make web-dev   # Vite :5173, /v1 proxied to gateway :8080 (hot reload)
+make web       # build + serve the SPA image on :8089 (prod-like, via nginx)
+make web-build # typecheck + bundle into web/dist
+```
+
+Market resolution: `demo.localhost:5173` works out of the box; on plain
+`localhost` the app stores a market slug (login page field) and sends it as
+`X-Tenant-Slug`.
+
+- **Shop**: browse/filter catalog → cart (localStorage, no backend cart) →
+  checkout (order + simulated card payment) → live order tracking with
+  status polling until delivered.
+- **Admin**: dashboard (revenue/orders/in-transit), product & category CRUD,
+  all-orders table + detail (cancel, mark delivered), shipments,
+  shipping methods, users.
+- Test cards in checkout: `tok_visa_ok` approves, `tok_visa_decline`
+  declines (any token containing `decline` fails).
 
 Local dev without Docker for services:
 

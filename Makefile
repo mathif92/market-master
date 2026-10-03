@@ -4,7 +4,7 @@ GO      ?= go
 SERVICES = identity catalog order payment logistics gateway
 COMPOSE   = docker compose -f deploy/docker-compose.yml
 
-.PHONY: all build test vet lint proto fmt tidy up down logs smoke clean
+.PHONY: all build test vet lint proto fmt tidy up down logs smoke clean web web-dev web-build web-lint
 
 all: lint test build
 
@@ -59,6 +59,19 @@ logs:
 
 smoke:
 	bash scripts/e2e.sh
+
+# --- web app -------------------------------------------------------------
+web:            ## build the SPA image (served by the compose stack on :8089)
+	$(COMPOSE) up -d --build web
+
+web-dev:        ## Vite dev server on :5173, /v1 proxied to gateway :8080
+	cd web && npm run dev
+
+web-build:      ## typecheck + production bundle into web/dist
+	cd web && npm run build
+
+web-lint:
+	cd web && npm run lint
 
 clean:
 	rm -rf bin

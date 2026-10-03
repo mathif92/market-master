@@ -5,3 +5,5 @@ bin/
 /tmp/
 .idea/
 .vscode/
+node_modules/
+web/dist/
