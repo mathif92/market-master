@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package order.v1;
+
+option go_package = "market-master/gen/order/v1;orderv1";
+
+// OrderService lets other services (payments) fetch authoritative order
+// facts synchronously over gRPC when events would introduce races.
+service OrderService {
+  rpc GetOrder(GetOrderRequest) returns (GetOrderResponse);
+}
+
+message GetOrderRequest {
+  string id = 1;
+  string tenant_id = 2;
+}
+
+message GetOrderResponse {
+  string id = 1;
+  string tenant_id = 2;
+  string customer_id = 3;
+  int64 total_cents = 4;
+  string currency = 5;
+  string status = 6;
+  string shipping_method_code = 7;
+  string recipient_name = 8;
+  string address_line = 9;
+  string city = 10;
+  string country = 11;
+  string postal_code = 12;
+}

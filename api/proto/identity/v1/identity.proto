@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package identity.v1;
+
+option go_package = "market-master/gen/identity/v1;identityv1";
+
+// IdentityService exposes internal lookups used by other services over gRPC.
+service IdentityService {
+  rpc ResolveTenant(ResolveTenantRequest) returns (ResolveTenantResponse);
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+}
+
+message ResolveTenantRequest {
+  string slug = 1;
+}
+
+message ResolveTenantResponse {
+  Tenant tenant = 1;
+}
+
+message GetUserResponse {
+  User user = 1;
+}
+
+message Tenant {
+  string id = 1;
+  string slug = 2;
+  string name = 3;
+  string status = 4;
+}
+
+message GetUserRequest {
+  string id = 1;
+}
+
+message User {
+  string id = 1;
+  string tenant_id = 2;
+  string email = 3;
+  string role = 4;
+  string status = 5;
+}
