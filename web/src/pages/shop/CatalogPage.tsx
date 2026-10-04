@@ -3,9 +3,10 @@ import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { request } from '@/lib/api'
 import type { Category, Product } from '@/lib/types'
-import { formatMoney } from '@/lib/format'
+import { effectivePrice, formatMoney, formatRule } from '@/lib/format'
 import { useCart } from '@/lib/cart'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { PageLoading, EmptyState, ErrorNote } from '@/components/ui/feedback'
 import { cn } from '@/lib/cn'
 import { Plus, Check } from 'lucide-react'
@@ -68,15 +69,33 @@ export function CatalogPage() {
                 <h3 className="font-medium text-slate-900 group-hover:text-brand-700">{p.name}</h3>
                 <p className="mt-1 line-clamp-2 text-sm text-slate-500">{p.description || 'No description'}</p>
               </Link>
-              <div className="mt-4 flex items-center justify-between">
-                <span className="text-lg font-semibold">{formatMoney(p.price_cents, p.currency)}</span>
+              <div className="mt-4 flex items-center justify-between gap-2">
+                <div>
+                  <div className="flex items-baseline gap-2">
+                    <span
+                      className={`text-lg font-semibold ${p.sale_price_cents != null ? 'text-red-600' : ''}`}
+                    >
+                      {formatMoney(effectivePrice(p), p.currency)}
+                    </span>
+                    {p.sale_price_cents != null && (
+                      <span className="text-sm text-slate-400 line-through">
+                        {formatMoney(p.price_cents, p.currency)}
+                      </span>
+                    )}
+                  </div>
+                  {p.campaign && (
+                    <Badge variant="danger" className="mt-1">
+                      {p.campaign.name} · {formatRule(p.campaign.rule_type, p.campaign.rule_value, p.currency)}
+                    </Badge>
+                  )}
+                </div>
                 <Button
                   size="sm"
                   onClick={() =>
                     cart.add({
                       productId: p.id,
                       name: p.name,
-                      unitPriceCents: p.price_cents,
+                      unitPriceCents: effectivePrice(p),
                       currency: p.currency,
                     })
                   }

@@ -15,6 +15,8 @@ import { MyOrdersPage } from './pages/shop/MyOrdersPage'
 import { OrderPage } from './pages/shop/OrderPage'
 import { DashboardPage } from './pages/admin/DashboardPage'
 import { AdminCatalogPage } from './pages/admin/AdminCatalogPage'
+import { AdminInventoryPage } from './pages/admin/AdminInventoryPage'
+import { AdminCampaignsPage } from './pages/admin/AdminCampaignsPage'
 import { AdminOrdersPage } from './pages/admin/AdminOrdersPage'
 import { AdminOrderDetailPage } from './pages/admin/AdminOrderDetailPage'
 import { AdminShipmentsPage } from './pages/admin/AdminShipmentsPage'
@@ -87,6 +89,8 @@ export default function App() {
       >
         <Route index element={<DashboardPage />} />
         <Route path="catalog" element={<AdminCatalogPage />} />
+        <Route path="inventory" element={<AdminInventoryPage />} />
+        <Route path="campaigns" element={<AdminCampaignsPage />} />
         <Route path="orders" element={<AdminOrdersPage />} />
         <Route path="orders/:id" element={<AdminOrderDetailPage />} />
         <Route path="shipments" element={<AdminShipmentsPage />} />

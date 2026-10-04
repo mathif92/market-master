@@ -82,8 +82,13 @@ scripts/e2e.sh                 smoke test
 
 ## Event flow reference (core loop)
 
-1. `POST /v1/orders` → catalog gRPC price snapshot → tx: order +
-   `order.created` outbox + idempotency completion.
+1. `POST /v1/orders` → catalog gRPC **price snapshot + campaign
+   selection (one campaign per order, no stacking; 422
+   `invalid_coupon`/`campaign_limit`) + atomic stock reserve** (tracked
+   products; pre-generated `order_id`; 422 `insufficient_stock`) → tx:
+   order + `order.created` outbox + idempotency completion. On tx
+   failure: best-effort `ReleaseOrderReservations` (holds + campaign
+   redemptions).
 2. `POST /v1/payments` → order gRPC (`GetOrder` for amount/status) → PSP
    authorize → tx: intent + `order.payment_authorized` [+ `order.paid`] /
    `order.payment_failed` outbox.
@@ -92,6 +97,12 @@ scripts/e2e.sh                 smoke test
    `third_party` stub) → `shipment.dispatched`.
 5. `payment-svc` group: `order.cancelled` → void authorized payments.
 6. `order-svc` group: `shipment.dispatched/delivered` → order status.
+7. `catalog-svc` group: `order.paid` → commit reservation (`on_hand -=`,
+   movement `sale`); `order.cancelled` → release hold (restock if already
+   committed) **and refund campaign redemption slots** (counters
+   recomputed from the ledger). `payment_failed` keeps the hold —
+   checkout retries payment on the same order; only cancellation
+   releases.
 
 Consumer groups each read the full topic; max parallelism per group =
 partition count (12).
@@ -102,8 +113,13 @@ partition count (12).
   routing rules) — run with `make test`.
 - The full integration path is `make smoke` against the compose stack.
   It asserts idempotent replay, paid→dispatched→delivered, declined card,
-  cancellation, plus platform flows (market list/role gating,
-  suspend→reactivate, platform-admin invite + disable).
+  cancellation, plus stock enforcement (422 `insufficient_stock`,
+  reserve→commit/release, webhook HMAC + upload content-hash replay),
+  campaigns (read-time sale price, list-vs-unit snapshot, 422
+  `invalid_coupon`/`campaign_limit`, coupon one-use + release on cancel,
+  `max_redemptions` cap + slot refund, public banner feed) and
+  platform flows (market list/role gating, suspend→reactivate,
+  platform-admin invite + disable).
 - When adding a consumer: cover replay (same event twice) and an
   illegal-transition case.
 - Web app: `make web-build` (strict tsc + vite) and `make web-lint`
@@ -120,5 +136,5 @@ assumptions so charts can wrap the same images built by `deploy/Dockerfile`.
 
 ## Out of scope for v1 (do not silently add)
 
-Carts, inventory/stock, promotions, notifications, refunds API, real
-Stripe/3PL integrations (interfaces + stubs exist), Helm charts.
+Carts, notifications, refunds API, real Stripe/3PL
+integrations (interfaces + stubs exist), Helm charts.

@@ -9,6 +9,7 @@ x-service: &service
     KAFKA_BROKERS: kafka:29092
     JWT_SECRET: dev-jwt-secret-change-me
     PSP_WEBHOOK_SECRET: dev-psp-secret
+    INGEST_WEBHOOK_SECRET: dev-ingest-secret
   depends_on:
     postgres:
       condition: service_healthy

@@ -209,6 +209,16 @@ func (r *Reservation) CompleteInTx(ctx context.Context, tx pgx.Tx, status int, b
 
 func (r *Reservation) completed() bool { return r != nil && r.done }
 
+// Key returns the claimed idempotency key ("" when there was none).
+// Handlers may derive deterministic business keys from it, e.g. to make
+// their own tables double as a replay guard.
+func (r *Reservation) Key() string {
+	if r == nil {
+		return ""
+	}
+	return r.key
+}
+
 // Hash returns the canonical request hash (method + path + body).
 func Hash(method, path string, body []byte) string {
 	h := sha256.New()

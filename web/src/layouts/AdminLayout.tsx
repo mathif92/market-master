@@ -4,6 +4,8 @@ import {
   LayoutDashboard,
   Package,
   Boxes,
+  Warehouse,
+  Tag,
   Truck,
   Route as RouteIcon,
   Users,
@@ -15,6 +17,8 @@ import { cn } from '@/lib/cn'
 const NAV = [
   { to: '/admin', end: true, label: 'Dashboard', icon: LayoutDashboard },
   { to: '/admin/catalog', label: 'Catalog', icon: Boxes },
+  { to: '/admin/inventory', label: 'Inventory', icon: Warehouse },
+  { to: '/admin/campaigns', label: 'Campaigns', icon: Tag },
   { to: '/admin/orders', label: 'Orders', icon: Package },
   { to: '/admin/shipments', label: 'Shipments', icon: Truck },
   { to: '/admin/shipping-methods', label: 'Shipping methods', icon: RouteIcon },

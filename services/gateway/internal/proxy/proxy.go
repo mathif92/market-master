@@ -270,11 +270,15 @@ func isPublic(method, path string) bool {
 		return true
 	case path == "/v1/psp/webhook" && method == http.MethodPost:
 		return true // HMAC-authenticated provider callback
+	case path == "/v1/inventory/webhook" && method == http.MethodPost:
+		return true // HMAC-authenticated stock ingestion callback
 	case method == http.MethodGet &&
 		(strings.HasPrefix(path, "/v1/categories") ||
 			strings.HasPrefix(path, "/v1/products") ||
 			strings.HasPrefix(path, "/v1/shipping-methods")):
 		return true
+	case path == "/v1/campaigns/active" && method == http.MethodGet:
+		return true // public sale banner (admin campaign routes stay JWT-gated)
 	default:
 		return false
 	}

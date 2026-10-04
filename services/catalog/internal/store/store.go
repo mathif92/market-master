@@ -28,11 +28,16 @@ type Product struct {
 	Name        string    `json:"name"`
 	Slug        string    `json:"slug"`
 	Description string    `json:"description"`
-	PriceCents  int64     `json:"price_cents"`
+	PriceCents  int64     `json:"price_cents"` // canonical — never rewritten by campaigns
 	Currency    string    `json:"currency"`
 	Status      string    `json:"status"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// Sale fields are computed at read time from live non-code campaigns;
+	// absent (null) when no campaign applies. Use effectivePrice() = the
+	// sale price when set, otherwise price_cents.
+	SalePriceCents *int64           `json:"sale_price_cents,omitempty"`
+	Campaign       *ProductCampaign `json:"campaign,omitempty"`
 }
 
 var (
@@ -182,7 +187,10 @@ func (s *Store) ListProducts(ctx context.Context, tenantID string, f ProductFilt
 			}
 			out = append(out, p)
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return decorateSalePrices(ctx, tx, tenantID, out)
 	})
 	if out == nil {
 		out = []Product{}
@@ -193,14 +201,56 @@ func (s *Store) ListProducts(ctx context.Context, tenantID string, f ProductFilt
 func (s *Store) GetProduct(ctx context.Context, tenantID, id string) (Product, error) {
 	var p Product
 	err := psql.ExecIn(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `
+		if err := tx.QueryRow(ctx, `
 			SELECT id, COALESCE(category_id::text, ''), name, slug, description,
 				price_cents, currency, status, created_at, updated_at
 			FROM products WHERE id = $1 AND tenant_id = $2`, id, tenantID).
 			Scan(&p.ID, &p.CategoryID, &p.Name, &p.Slug, &p.Description,
-				&p.PriceCents, &p.Currency, &p.Status, &p.CreatedAt, &p.UpdatedAt)
+				&p.PriceCents, &p.Currency, &p.Status, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return err
+		}
+		single := []Product{p}
+		if err := decorateSalePrices(ctx, tx, tenantID, single); err != nil {
+			return err
+		}
+		p = single[0]
+		return nil
 	})
 	return p, mapErr(err)
+}
+
+// decorateSalePrices attaches sale_price_cents + campaign to products that
+// are covered by a live non-code campaign (shared selection rule with
+// checkout, so badges always match the cart).
+func decorateSalePrices(ctx context.Context, tx pgx.Tx, tenantID string, products []Product) error {
+	if len(products) == 0 {
+		return nil
+	}
+	campaigns, err := loadLiveCampaigns(ctx, tx, tenantID, false)
+	if err != nil {
+		return err
+	}
+	if len(campaigns) == 0 {
+		return nil
+	}
+	for i := range products {
+		c, ok := bestCampaignFor(campaigns, products[i].ID, products[i].CategoryID,
+			products[i].PriceCents)
+		if !ok {
+			continue
+		}
+		d := ComputeDiscount(c.RuleType, c.RuleValue, products[i].PriceCents)
+		if d <= 0 {
+			continue
+		}
+		sale := products[i].PriceCents - d
+		products[i].SalePriceCents = &sale
+		products[i].Campaign = &ProductCampaign{
+			ID: c.ID, Name: c.Name, RuleType: c.RuleType,
+			RuleValue: c.RuleValue, EndsAt: c.EndsAt,
+		}
+	}
+	return nil
 }
 
 // GetActiveProducts fetches the given ids for order-line validation.

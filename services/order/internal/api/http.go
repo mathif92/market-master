@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -19,6 +20,7 @@ import (
 	"market-master/pkg/httpmw"
 	"market-master/pkg/httpx"
 	"market-master/pkg/idempotency"
+	"market-master/pkg/idgen"
 	"market-master/pkg/outbox"
 	"market-master/pkg/tenantctx"
 	"market-master/services/order/internal/store"
@@ -81,6 +83,9 @@ type createOrderReq struct {
 		PostalCode    string `json:"postal_code"`
 	} `json:"shipping"`
 	ShippingMethodCode string `json:"shipping_method_code"`
+	// Optional coupon code presented at checkout; validated by catalog
+	// (422 invalid_coupon / campaign_limit when refused).
+	CouponCode string `json:"coupon_code"`
 }
 
 func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
@@ -102,7 +107,12 @@ func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
 	tenant := tenantctx.FromRequest(r)
 	userID := claims.Subject
 
-	// One internal gRPC round-trip: availability check + price snapshot.
+	// Pre-generate the order id: stock is reserved against it inside the
+	// same catalog call that validates the lines.
+	orderID := idgen.New()
+
+	// One internal gRPC round-trip: availability check + price snapshot +
+	// atomic stock reservation (tracked products only).
 	in := make([]*catalogv1.OrderLineInput, 0, len(req.Lines))
 	for _, l := range req.Lines {
 		in = append(in, &catalogv1.OrderLineInput{ProductId: l.ProductID, Quantity: int32(l.Quantity)})
@@ -110,7 +120,8 @@ func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
 	gctx, cancel := context.WithTimeout(grpcx.WithOutgoing(r.Context(), tenant, userID), 10*time.Second)
 	defer cancel()
 	resp, err := s.catalog.ValidateOrderLines(gctx, &catalogv1.ValidateOrderLinesRequest{
-		TenantId: tenant, Lines: in,
+		TenantId: tenant, Lines: in, Reserve: true, OrderId: orderID,
+		CouponCode: strings.TrimSpace(req.CouponCode),
 	})
 	if err != nil {
 		s.log.Error("catalog validation failed", "err", err)
@@ -119,7 +130,11 @@ func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !resp.GetValid() {
-		s.fail(w, http.StatusUnprocessableEntity, "invalid_lines", resp.GetErrorMessage())
+		code := resp.GetErrorCode()
+		if code == "" {
+			code = "invalid_lines"
+		}
+		s.fail(w, http.StatusUnprocessableEntity, code, resp.GetErrorMessage())
 		return
 	}
 	if len(resp.GetLines()) == 0 {
@@ -148,6 +163,7 @@ func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
 			Name:           l.GetName(),
 			Quantity:       int(l.GetQuantity()),
 			UnitPriceCents: l.GetUnitPriceCents(),
+			ListPriceCents: l.GetListPriceCents(),
 		})
 	}
 
@@ -156,6 +172,7 @@ func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
 	var body []byte
 
 	o, err := s.store.Create(r.Context(), tenant, store.CreateInput{
+		ID:                 orderID,
 		CustomerID:         userID,
 		TotalCents:         total,
 		Currency:           currency,
@@ -184,6 +201,17 @@ func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
 		return resv.CompleteInTx(r.Context(), tx, status, body)
 	})
 	if err != nil {
+		// The order row did not land: give the stock hold back so it can
+		// never leak (best effort — orphaned holds stay reserved until a
+		// cancel/payment event, see README "Known gaps").
+		relCtx, relCancel := context.WithTimeout(
+			grpcx.WithOutgoing(context.Background(), tenant, userID), 5*time.Second)
+		if _, rerr := s.catalog.ReleaseOrderReservations(relCtx, &catalogv1.ReleaseOrderReservationsRequest{
+			TenantId: tenant, OrderId: orderID,
+		}); rerr != nil {
+			s.log.Error("reservation release failed", "order_id", orderID, "err", rerr)
+		}
+		relCancel()
 		httpx.Internal(w, err)
 		return
 	}
@@ -309,6 +337,7 @@ type payloadLine struct {
 	Name           string `json:"name"`
 	Quantity       int    `json:"quantity"`
 	UnitPriceCents int64  `json:"unit_price_cents"`
+	ListPriceCents int64  `json:"list_price_cents"`
 }
 
 type orderPayload struct {
@@ -330,6 +359,7 @@ func buildPayload(o store.Order, lines []store.Line) orderPayload {
 		pl = append(pl, payloadLine{
 			ProductID: l.ProductID, Name: l.Name,
 			Quantity: l.Quantity, UnitPriceCents: l.UnitPriceCents,
+			ListPriceCents: l.ListPriceCents,
 		})
 	}
 	return orderPayload{

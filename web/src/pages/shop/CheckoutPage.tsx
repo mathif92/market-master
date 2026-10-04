@@ -45,6 +45,7 @@ export function CheckoutPage() {
   })
   const [method, setMethod] = useState('')
   const [card, setCard] = useState(TEST_CARDS[0].id)
+  const [coupon, setCoupon] = useState('')
   const [error, setError] = useState('')
   const [orderId, setOrderId] = useState('')
   const [payState, setPayState] = useState<'idle' | 'paying' | 'failed'>('idle')
@@ -68,6 +69,7 @@ export function CheckoutPage() {
           lines: cart.items.map((i) => ({ product_id: i.productId, quantity: i.quantity })),
           shipping_method_code: selectedMethod,
           shipping,
+          ...(coupon.trim() ? { coupon_code: coupon.trim() } : {}),
         },
       }),
     onSuccess: (res) => {
@@ -75,6 +77,9 @@ export function CheckoutPage() {
       pay(res.order)
     },
     onError: (err) => {
+      // The order never landed: retire this attempt's key so a retry with
+      // a smaller quantity is not a replay of the stored 4xx.
+      orderKey.current = newIdempotencyKey()
       setError(err instanceof ApiError ? err.message : 'Could not create the order')
       setPayState('idle')
     },
@@ -237,12 +242,27 @@ export function CheckoutPage() {
           </Card>
         </div>
 
-        <Card className="h-fit">
-          <CardHeader>
-            <CardTitle>Order summary</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            {cart.items.map((i) => (
+          <Card className="h-fit">
+            <CardHeader>
+              <CardTitle>Order summary</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <Field label="Coupon code (optional)" htmlFor="coupon">
+                <Input
+                  id="coupon"
+                  value={coupon}
+                  onChange={(e) => setCoupon(e.target.value)}
+                  placeholder="e.g. BF50"
+                  disabled={!!orderId}
+                  autoComplete="off"
+                />
+              </Field>
+              {orderId && (
+                <p className="text-xs text-slate-400">
+                  Applied when the order was placed — live campaign prices were used above.
+                </p>
+              )}
+              {cart.items.map((i) => (
               <div key={i.productId} className="flex justify-between gap-2">
                 <span className="truncate text-slate-600">
                   {i.name} × {i.quantity}

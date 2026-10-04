@@ -19,7 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	CatalogService_ValidateOrderLines_FullMethodName = "/catalog.v1.CatalogService/ValidateOrderLines"
+	CatalogService_ValidateOrderLines_FullMethodName       = "/catalog.v1.CatalogService/ValidateOrderLines"
+	CatalogService_ReleaseOrderReservations_FullMethodName = "/catalog.v1.CatalogService/ReleaseOrderReservations"
 )
 
 // CatalogServiceClient is the client API for CatalogService service.
@@ -27,9 +28,13 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // CatalogService lets the order service validate and snapshot line items
-// against authoritative prices in one internal gRPC round-trip.
+// against authoritative prices — and atomically reserve stock — in one
+// internal gRPC round-trip.
 type CatalogServiceClient interface {
 	ValidateOrderLines(ctx context.Context, in *ValidateOrderLinesRequest, opts ...grpc.CallOption) (*ValidateOrderLinesResponse, error)
+	// ReleaseOrderReservations drops stock holds AND campaign redemptions for
+	// an order that was never placed (create failed after reserve).
+	ReleaseOrderReservations(ctx context.Context, in *ReleaseOrderReservationsRequest, opts ...grpc.CallOption) (*ReleaseOrderReservationsResponse, error)
 }
 
 type catalogServiceClient struct {
@@ -50,14 +55,28 @@ func (c *catalogServiceClient) ValidateOrderLines(ctx context.Context, in *Valid
 	return out, nil
 }
 
+func (c *catalogServiceClient) ReleaseOrderReservations(ctx context.Context, in *ReleaseOrderReservationsRequest, opts ...grpc.CallOption) (*ReleaseOrderReservationsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReleaseOrderReservationsResponse)
+	err := c.cc.Invoke(ctx, CatalogService_ReleaseOrderReservations_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CatalogServiceServer is the server API for CatalogService service.
 // All implementations must embed UnimplementedCatalogServiceServer
 // for forward compatibility.
 //
 // CatalogService lets the order service validate and snapshot line items
-// against authoritative prices in one internal gRPC round-trip.
+// against authoritative prices — and atomically reserve stock — in one
+// internal gRPC round-trip.
 type CatalogServiceServer interface {
 	ValidateOrderLines(context.Context, *ValidateOrderLinesRequest) (*ValidateOrderLinesResponse, error)
+	// ReleaseOrderReservations drops stock holds AND campaign redemptions for
+	// an order that was never placed (create failed after reserve).
+	ReleaseOrderReservations(context.Context, *ReleaseOrderReservationsRequest) (*ReleaseOrderReservationsResponse, error)
 	mustEmbedUnimplementedCatalogServiceServer()
 }
 
@@ -70,6 +89,9 @@ type UnimplementedCatalogServiceServer struct{}
 
 func (UnimplementedCatalogServiceServer) ValidateOrderLines(context.Context, *ValidateOrderLinesRequest) (*ValidateOrderLinesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ValidateOrderLines not implemented")
+}
+func (UnimplementedCatalogServiceServer) ReleaseOrderReservations(context.Context, *ReleaseOrderReservationsRequest) (*ReleaseOrderReservationsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReleaseOrderReservations not implemented")
 }
 func (UnimplementedCatalogServiceServer) mustEmbedUnimplementedCatalogServiceServer() {}
 func (UnimplementedCatalogServiceServer) testEmbeddedByValue()                        {}
@@ -110,6 +132,24 @@ func _CatalogService_ValidateOrderLines_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CatalogService_ReleaseOrderReservations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReleaseOrderReservationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CatalogServiceServer).ReleaseOrderReservations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CatalogService_ReleaseOrderReservations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CatalogServiceServer).ReleaseOrderReservations(ctx, req.(*ReleaseOrderReservationsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // CatalogService_ServiceDesc is the grpc.ServiceDesc for CatalogService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -120,6 +160,10 @@ var CatalogService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ValidateOrderLines",
 			Handler:    _CatalogService_ValidateOrderLines_Handler,
+		},
+		{
+			MethodName: "ReleaseOrderReservations",
+			Handler:    _CatalogService_ReleaseOrderReservations_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

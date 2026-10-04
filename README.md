@@ -33,6 +33,7 @@ Built as Go microservices with an event-driven core around a Kafka
 ```bash
 make up      # docker compose: Postgres, Kafka (KRaft), 6 services, web (:8089)
 make smoke   # end-to-end: tenant → catalog → order → pay → dispatch → deliver
+             # (+ stock enforcement, campaigns, platform panel)
 make logs    # follow logs
 make down    # tear down (incl. volumes)
 ```
@@ -171,6 +172,140 @@ curl -H "$AUTH" -H 'X-Tenant-Slug: demo' localhost:8080/v1/shipments?order_id=<i
 curl -H "$AUTH" -H 'X-Tenant-Slug: demo' -X POST localhost:8080/v1/shipments/<sid>/deliver
 ```
 
+## Inventory & stock
+
+Stock lives in the catalog service (`stock_levels` + append-only
+`stock_movements` ledger). A product with **no level row is untracked**:
+orders accept any quantity until the first ingestion starts tracking it.
+Tracked products enforce **reserve → commit → release**:
+
+1. `POST /v1/orders` → catalog gRPC atomically checks availability and
+   bumps `reserved` (all-or-nothing, keyed by a pre-generated `order_id`).
+   Over-ordering fails with **422 `insufficient_stock`**.
+2. `order.paid` → `catalog-svc` consumer commits (`on_hand -=`,
+   movement `sale`).
+3. `order.cancelled` → the hold is released; a committed hold would be
+   restocked. `order.payment_failed` deliberately **keeps** the hold —
+   checkout retries payment on the same order, and only cancellation
+   releases (declined-then-abandoned orders hold stock until cancelled).
+
+Three ingestion surfaces (all idempotent, all tenant-scoped, row-level
+report of unknown SKUs / invariant violations):
+
+```bash
+# JSON batch (staff JWT; Idempotency-Key required — the key is the batch key)
+curl -H "$AUTH" -H 'X-Tenant-Slug: demo' -H 'Idempotency-Key: s1' \
+  -X POST localhost:8080/v1/inventory/ingest \
+  -d '{"mode":"set","items":[{"sku":"popcorn","quantity":50}]}'
+
+# file upload (CSV/XLSX: header sku,quantity — deduped by content hash)
+printf 'sku,quantity\npopcorn,50\n' > stock.csv
+curl -H "$AUTH" -H 'X-Tenant-Slug: demo' \
+  -X POST localhost:8080/v1/inventory/upload \
+  -F mode=set -F file=@stock.csv
+
+# HMAC webhook (market comes from the signed payload; no JWT)
+BODY='{"event_id":"evt-1","tenant_id":"<tenant-uuid>","mode":"set",
+       "items":[{"sku":"popcorn","quantity":50}]}'
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$INGEST_WEBHOOK_SECRET" \
+  | awk '{print $NF}')
+curl -X POST localhost:8080/v1/inventory/webhook \
+  -H "X-Ingest-Signature: $SIG" -d "$BODY"
+
+# inspection (staff)
+curl -H "$AUTH" -H 'X-Tenant-Slug: demo' localhost:8080/v1/inventory/levels
+curl -H "$AUTH" -H 'X-Tenant-Slug: demo' \
+  'localhost:8080/v1/inventory/movements?limit=25'
+```
+
+Modes: `set` replaces `on_hand`, `delta` adds (negative allowed); a `set`
+can never drop below what's reserved. Admin UI: **Inventory** in the
+market admin (`/admin/inventory`) — adjustment dialog, file upload,
+untracked/low-stock warnings, movement feed.
+
+Known gaps (v1): an orphan hold can survive a crash between reserve and
+order insert when the best-effort release also fails; holds on
+`awaiting_payment` orders are only released by cancel/payment-failure
+(no TTL sweeper yet); one shared webhook secret; no rate limiting.
+
+## Campaigns & discounts
+
+Campaigns live in the catalog service (`campaigns`, `campaign_codes`,
+`campaign_redemptions` — all tenant-scoped with FORCE RLS). A campaign
+is a time-boxed discount rule (`percent` basis points or `fixed` cents)
+scoped to `sitewide`, a `category`, or a `product`, optionally gated by
+a coupon code. Admin UI: **Campaigns** in the market admin
+(`/admin/campaigns`).
+
+**Selection & checkout rules**
+
+1. **One campaign per order, no stacking.** All candidates (live,
+   window-open, scope-matching) compete; the winner is the one that
+   **maximizes the total discount for that order**. Ties break: more
+   specific scope → coupon over auto → lower id. This is deliberate:
+   specificity-first at order level could let a product-5% beat a
+   sitewide-30%, which reads wrong on a cart that mixes both.
+2. Coupon campaigns are **candidates only when the order carries the
+   code** (`requires_code` never auto-applies, never appears in
+   read-time sale prices or the public banner). A wrong/inactive/expired
+   code → **422 `invalid_coupon`** (no side effects). A losing code
+   never errors and never stacks — it simply isn't consumed.
+3. Caps: `max_redemptions` (campaign) and `max_uses` (per code) are
+   enforced **inside the reserve transaction** → **422
+   `campaign_limit`**. Counters are guarded single-row updates; the
+   `campaign_redemptions` ledger is the truth (counters are recomputed
+   from it on release, so a failed transaction can never leak a slot).
+4. **Price snapshot**: `order.created` lines carry both
+   `unit_price_cents` (final, campaign-applied, clamped to ≥ 1¢) and
+   `list_price_cents` (canonical, pre-campaign). Payments take the
+   order total as-is — the PSP never sees campaign logic.
+5. **Read-time decoration**: product reads return `sale_price_cents`
+   and the winning `campaign` (same selection function as checkout, so
+   display always matches what the cart will charge). Canonical
+   `price_cents` is never rewritten. Banners come from the public
+   `GET /v1/campaigns/active` (no JWT; tenant from host/header).
+6. **Lifecycle**: `draft` → `active` → `archived`. `PUT /v1/campaigns/{id}`
+   requires `status` explicitly; `DELETE` archives (keeps the redemption
+   ledger). Archiving removes the sale from reads immediately; existing
+   orders keep their snapshot. `POST` create and code minting require an
+   `Idempotency-Key` (completed inside the business tx).
+
+**Atomicity**: pricing, counter guards, redemption inserts and stock
+reserves run in **one catalog transaction** keyed by the pre-generated
+`order_id`; a stock shortage rolls the campaign slot back (verified in
+smoke). Lock order: campaign rows → code rows → product levels (sorted
+by `product_id`). Replays of the same `order_id` recompute prices
+without re-taking holds or re-bumping counters. `order.cancelled`
+releases holds **and** refunds redemption slots; `payment_failed` keeps
+both (retry on the same order).
+
+```bash
+# create an active sitewide 50% campaign (staff JWT + Idempotency-Key)
+curl -H "$AUTH" -H 'X-Tenant-Slug: demo' -H 'Idempotency-Key: c1' \
+  -X POST localhost:8080/v1/campaigns -d '{
+    "name":"Black Friday","status":"active","rule_type":"percent",
+    "rule_value":5000,"scope_type":"sitewide","requires_code":false,
+    "starts_at":"2026-11-27T00:00:00Z","ends_at":"2026-11-28T00:00:00Z"}'
+
+# mint 100 single-use codes for a coupon campaign, then order with it
+curl -H "$AUTH" -H 'X-Tenant-Slug: demo' -H 'Idempotency-Key: c2' \
+  -X POST localhost:8080/v1/campaigns/<id>/codes \
+  -d '{"count":100,"max_uses":1}'
+curl -H "$AUTH" -H 'X-Tenant-Slug: demo' -H 'Idempotency-Key: k9' \
+  -X POST localhost:8080/v1/orders \
+  -d '{"coupon_code":"ABCDE12345","lines":[...],"shipping":{...}}'
+
+# public banner (no JWT)
+curl localhost:8080/v1/campaigns/active -H 'X-Tenant-Slug: demo'
+```
+
+Known gaps (v1): no stacking/multi-campaign carts, no per-customer
+caps, no percentage rounding policies beyond ≥ 1¢ clamp, category
+scope matches products whose `category_id` is set (no subcategory
+expansion), mid-window edits apply to orders created afterwards, and
+`payment_failed` orders hold their redemption slot until cancelled (no
+TTL sweeper).
+
 ## Events (Kafka `market.orders.v1`)
 
 Envelope (`pkg/evt`): `event_id`, `event_type`, `occurred_at`, `tenant_id`,
@@ -182,6 +317,8 @@ Envelope (`pkg/evt`): `event_id`, `event_type`, `occurred_at`, `tenant_id`,
 - **12 partitions**, `partition = hash(order_id) mod 12` → every event of one
   order is ordered within one partition; each consumer group scales to at
   most 12 instances.
+- Consumer groups (each reads the full topic): `order-svc`, `payment-svc`,
+  `logistics-svc`, `catalog-svc` (stock commit/release).
 - Emission is via **transactional outbox** (state change + event commit
   atomically; relay publishes with `FOR UPDATE SKIP LOCKED`).
 - Delivery is **at-least-once**; handlers are idempotent (event_id dedupe +

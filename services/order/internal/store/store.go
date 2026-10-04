@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"market-master/pkg/idgen"
 	"market-master/pkg/psql"
 	"market-master/services/order/internal/sm"
 )
@@ -35,6 +36,9 @@ type Line struct {
 	Name           string `json:"name"`
 	Quantity       int    `json:"quantity"`
 	UnitPriceCents int64  `json:"unit_price_cents"`
+	// ListPriceCents is the canonical catalog price before any campaign
+	// (equals unit_price_cents when no discount applied).
+	ListPriceCents int64 `json:"list_price_cents"`
 }
 
 type OrderWithLines struct {
@@ -43,6 +47,9 @@ type OrderWithLines struct {
 }
 
 type CreateInput struct {
+	// ID pre-dates the row: the caller reserves stock against it before
+	// the insert. Empty falls back to a DB-generated id.
+	ID                 string
 	CustomerID         string
 	TotalCents         int64
 	Currency           string
@@ -71,14 +78,17 @@ func (s *Store) Create(ctx context.Context, tenantID string, in CreateInput,
 	beforeCommit func(tx pgx.Tx, o Order) error) (Order, error) {
 	var o Order
 	err := psql.ExecIn(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		if in.ID == "" {
+			in.ID = idgen.New()
+		}
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO orders (tenant_id, customer_id, total_cents, currency,
+			INSERT INTO orders (id, tenant_id, customer_id, total_cents, currency,
 				shipping_method_code, recipient_name, address_line, city, country, postal_code)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			RETURNING id, tenant_id, customer_id, status, total_cents, currency,
 				shipping_method_code, recipient_name, address_line, city, country,
 				postal_code, created_at, updated_at`,
-			tenantID, in.CustomerID, in.TotalCents, in.Currency,
+			in.ID, tenantID, in.CustomerID, in.TotalCents, in.Currency,
 			in.ShippingMethodCode, in.RecipientName, in.AddressLine, in.City,
 			in.Country, in.PostalCode).
 			Scan(&o.ID, &o.TenantID, &o.CustomerID, &o.Status, &o.TotalCents, &o.Currency,
@@ -88,9 +98,11 @@ func (s *Store) Create(ctx context.Context, tenantID string, in CreateInput,
 		}
 		for _, l := range in.Lines {
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO order_lines (order_id, tenant_id, product_id, name, quantity, unit_price_cents)
-				VALUES ($1, $2, $3, $4, $5, $6)`,
-				o.ID, tenantID, l.ProductID, l.Name, l.Quantity, l.UnitPriceCents); err != nil {
+				INSERT INTO order_lines (order_id, tenant_id, product_id, name, quantity,
+					unit_price_cents, list_price_cents)
+				VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+				o.ID, tenantID, l.ProductID, l.Name, l.Quantity, l.UnitPriceCents,
+				l.ListPriceCents); err != nil {
 				return err
 			}
 		}
@@ -253,7 +265,7 @@ func scanOrder(row pgx.Row, o *Order) error {
 
 func scanLines(ctx context.Context, q pgx.Tx, orderID string) ([]Line, error) {
 	rows, err := q.Query(ctx, `
-		SELECT order_id::text, product_id, name, quantity, unit_price_cents
+		SELECT order_id::text, product_id, name, quantity, unit_price_cents, list_price_cents
 		FROM order_lines WHERE order_id = $1 ORDER BY id`, orderID)
 	if err != nil {
 		return nil, err
@@ -262,7 +274,8 @@ func scanLines(ctx context.Context, q pgx.Tx, orderID string) ([]Line, error) {
 	var out []Line
 	for rows.Next() {
 		var l Line
-		if err := rows.Scan(&l.OrderID, &l.ProductID, &l.Name, &l.Quantity, &l.UnitPriceCents); err != nil {
+		if err := rows.Scan(&l.OrderID, &l.ProductID, &l.Name, &l.Quantity,
+			&l.UnitPriceCents, &l.ListPriceCents); err != nil {
 			return nil, err
 		}
 		out = append(out, l)

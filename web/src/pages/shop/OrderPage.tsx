@@ -104,18 +104,47 @@ export function OrderPage() {
           </CardHeader>
           <CardContent className="space-y-2 text-sm">
             {o.lines?.length ? (
-              o.lines.map((l, i) => (
-                <div key={i} className="flex justify-between gap-2">
-                  <span className="truncate text-slate-600">
-                    {l.name} × {l.quantity}
-                  </span>
-                  <span className="shrink-0 font-medium">
-                    {formatMoney(l.unit_price_cents * l.quantity, o.currency)}
-                  </span>
-                </div>
-              ))
+              o.lines.map((l, i) => {
+                const lineList = (l.list_price_cents || l.unit_price_cents) * l.quantity
+                const linePaid = l.unit_price_cents * l.quantity
+                const discounted = lineList > linePaid
+                return (
+                  <div key={i} className="flex justify-between gap-2">
+                    <span className="truncate text-slate-600">
+                      {l.name} × {l.quantity}
+                    </span>
+                    <span className="shrink-0">
+                      {discounted && (
+                        <span className="mr-1.5 text-slate-400 line-through">
+                          {formatMoney(lineList, o.currency)}
+                        </span>
+                      )}
+                      <span className={discounted ? 'font-medium text-red-600' : 'font-medium'}>
+                        {formatMoney(linePaid, o.currency)}
+                      </span>
+                    </span>
+                  </div>
+                )
+              })
             ) : (
               <p className="text-slate-500">—</p>
+            )}
+            {o.lines?.some((l) => (l.list_price_cents || l.unit_price_cents) > l.unit_price_cents) && (
+              <div className="flex justify-between text-emerald-700">
+                <span>Campaign savings</span>
+                <span className="font-medium">
+                  −
+                  {formatMoney(
+                    o.lines.reduce(
+                      (sum, l) =>
+                        sum +
+                        ((l.list_price_cents || l.unit_price_cents) - l.unit_price_cents) * l.quantity,
+                      0,
+                    ),
+                    o.currency,
+                  )}
+                </span>
+              </div>
             )}
             <div className="flex justify-between border-t border-slate-200 pt-2 font-semibold">
               <span>Total</span>

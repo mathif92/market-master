@@ -5,14 +5,25 @@ package catalog.v1;
 option go_package = "market-master/gen/catalog/v1;catalogv1";
 
 // CatalogService lets the order service validate and snapshot line items
-// against authoritative prices in one internal gRPC round-trip.
+// against authoritative prices — and atomically reserve stock — in one
+// internal gRPC round-trip.
 service CatalogService {
   rpc ValidateOrderLines(ValidateOrderLinesRequest) returns (ValidateOrderLinesResponse);
+  // ReleaseOrderReservations drops stock holds AND campaign redemptions for
+  // an order that was never placed (create failed after reserve).
+  rpc ReleaseOrderReservations(ReleaseOrderReservationsRequest) returns (ReleaseOrderReservationsResponse);
 }
 
 message ValidateOrderLinesRequest {
   string tenant_id = 1;
   repeated OrderLineInput lines = 2;
+  // reserve=true atomically holds stock for order_id (tracked products only).
+  bool reserve = 3;
+  // Required when reserve=true; the caller pre-generates the order id.
+  string order_id = 4;
+  // Optional coupon code presented at checkout. Live campaigns compete on
+  // total discount; an invalid code fails validation with invalid_coupon.
+  string coupon_code = 5;
 }
 
 message OrderLineInput {
@@ -24,12 +35,26 @@ message ValidateOrderLinesResponse {
   bool valid = 1;
   string error_message = 2;
   repeated OrderLineSnapshot lines = 3;
+  // "" | "insufficient_stock" | "invalid_lines" | "invalid_coupon"
+  //     | "campaign_limit"
+  string error_code = 4;
 }
 
 message OrderLineSnapshot {
   string product_id = 1;
   string name = 2;
   int32 quantity = 3;
+  // Final unit price after the applied campaign (what the customer pays).
   int64 unit_price_cents = 4;
   string currency = 5;
+  // Canonical catalog price before discount (equals unit_price_cents when
+  // no campaign applies) — kept for display (strike-through pricing).
+  int64 list_price_cents = 6;
 }
+
+message ReleaseOrderReservationsRequest {
+  string tenant_id = 1;
+  string order_id = 2;
+}
+
+message ReleaseOrderReservationsResponse {}

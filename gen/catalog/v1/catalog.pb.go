@@ -22,9 +22,16 @@ const (
 )
 
 type ValidateOrderLinesRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
-	Lines         []*OrderLineInput      `protobuf:"bytes,2,rep,name=lines,proto3" json:"lines,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	TenantId string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Lines    []*OrderLineInput      `protobuf:"bytes,2,rep,name=lines,proto3" json:"lines,omitempty"`
+	// reserve=true atomically holds stock for order_id (tracked products only).
+	Reserve bool `protobuf:"varint,3,opt,name=reserve,proto3" json:"reserve,omitempty"`
+	// Required when reserve=true; the caller pre-generates the order id.
+	OrderId string `protobuf:"bytes,4,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	// Optional coupon code presented at checkout. Live campaigns compete on
+	// total discount; an invalid code fails validation with invalid_coupon.
+	CouponCode    string `protobuf:"bytes,5,opt,name=coupon_code,json=couponCode,proto3" json:"coupon_code,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -71,6 +78,27 @@ func (x *ValidateOrderLinesRequest) GetLines() []*OrderLineInput {
 		return x.Lines
 	}
 	return nil
+}
+
+func (x *ValidateOrderLinesRequest) GetReserve() bool {
+	if x != nil {
+		return x.Reserve
+	}
+	return false
+}
+
+func (x *ValidateOrderLinesRequest) GetOrderId() string {
+	if x != nil {
+		return x.OrderId
+	}
+	return ""
+}
+
+func (x *ValidateOrderLinesRequest) GetCouponCode() string {
+	if x != nil {
+		return x.CouponCode
+	}
+	return ""
 }
 
 type OrderLineInput struct {
@@ -126,10 +154,14 @@ func (x *OrderLineInput) GetQuantity() int32 {
 }
 
 type ValidateOrderLinesResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Valid         bool                   `protobuf:"varint,1,opt,name=valid,proto3" json:"valid,omitempty"`
-	ErrorMessage  string                 `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
-	Lines         []*OrderLineSnapshot   `protobuf:"bytes,3,rep,name=lines,proto3" json:"lines,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Valid        bool                   `protobuf:"varint,1,opt,name=valid,proto3" json:"valid,omitempty"`
+	ErrorMessage string                 `protobuf:"bytes,2,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`
+	Lines        []*OrderLineSnapshot   `protobuf:"bytes,3,rep,name=lines,proto3" json:"lines,omitempty"`
+	// "" | "insufficient_stock" | "invalid_lines" | "invalid_coupon"
+	//
+	//	| "campaign_limit"
+	ErrorCode     string `protobuf:"bytes,4,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -185,13 +217,24 @@ func (x *ValidateOrderLinesResponse) GetLines() []*OrderLineSnapshot {
 	return nil
 }
 
+func (x *ValidateOrderLinesResponse) GetErrorCode() string {
+	if x != nil {
+		return x.ErrorCode
+	}
+	return ""
+}
+
 type OrderLineSnapshot struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	ProductId      string                 `protobuf:"bytes,1,opt,name=product_id,json=productId,proto3" json:"product_id,omitempty"`
-	Name           string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Quantity       int32                  `protobuf:"varint,3,opt,name=quantity,proto3" json:"quantity,omitempty"`
-	UnitPriceCents int64                  `protobuf:"varint,4,opt,name=unit_price_cents,json=unitPriceCents,proto3" json:"unit_price_cents,omitempty"`
-	Currency       string                 `protobuf:"bytes,5,opt,name=currency,proto3" json:"currency,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	ProductId string                 `protobuf:"bytes,1,opt,name=product_id,json=productId,proto3" json:"product_id,omitempty"`
+	Name      string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Quantity  int32                  `protobuf:"varint,3,opt,name=quantity,proto3" json:"quantity,omitempty"`
+	// Final unit price after the applied campaign (what the customer pays).
+	UnitPriceCents int64  `protobuf:"varint,4,opt,name=unit_price_cents,json=unitPriceCents,proto3" json:"unit_price_cents,omitempty"`
+	Currency       string `protobuf:"bytes,5,opt,name=currency,proto3" json:"currency,omitempty"`
+	// Canonical catalog price before discount (equals unit_price_cents when
+	// no campaign applies) — kept for display (strike-through pricing).
+	ListPriceCents int64 `protobuf:"varint,6,opt,name=list_price_cents,json=listPriceCents,proto3" json:"list_price_cents,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -261,32 +304,139 @@ func (x *OrderLineSnapshot) GetCurrency() string {
 	return ""
 }
 
+func (x *OrderLineSnapshot) GetListPriceCents() int64 {
+	if x != nil {
+		return x.ListPriceCents
+	}
+	return 0
+}
+
+type ReleaseOrderReservationsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	OrderId       string                 `protobuf:"bytes,2,opt,name=order_id,json=orderId,proto3" json:"order_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReleaseOrderReservationsRequest) Reset() {
+	*x = ReleaseOrderReservationsRequest{}
+	mi := &file_catalog_v1_catalog_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReleaseOrderReservationsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReleaseOrderReservationsRequest) ProtoMessage() {}
+
+func (x *ReleaseOrderReservationsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_catalog_v1_catalog_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReleaseOrderReservationsRequest.ProtoReflect.Descriptor instead.
+func (*ReleaseOrderReservationsRequest) Descriptor() ([]byte, []int) {
+	return file_catalog_v1_catalog_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ReleaseOrderReservationsRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
+	}
+	return ""
+}
+
+func (x *ReleaseOrderReservationsRequest) GetOrderId() string {
+	if x != nil {
+		return x.OrderId
+	}
+	return ""
+}
+
+type ReleaseOrderReservationsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReleaseOrderReservationsResponse) Reset() {
+	*x = ReleaseOrderReservationsResponse{}
+	mi := &file_catalog_v1_catalog_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReleaseOrderReservationsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReleaseOrderReservationsResponse) ProtoMessage() {}
+
+func (x *ReleaseOrderReservationsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_catalog_v1_catalog_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReleaseOrderReservationsResponse.ProtoReflect.Descriptor instead.
+func (*ReleaseOrderReservationsResponse) Descriptor() ([]byte, []int) {
+	return file_catalog_v1_catalog_proto_rawDescGZIP(), []int{5}
+}
+
 var File_catalog_v1_catalog_proto protoreflect.FileDescriptor
 
 const file_catalog_v1_catalog_proto_rawDesc = "" +
 	"\n" +
 	"\x18catalog/v1/catalog.proto\x12\n" +
-	"catalog.v1\"j\n" +
+	"catalog.v1\"\xc0\x01\n" +
 	"\x19ValidateOrderLinesRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x120\n" +
-	"\x05lines\x18\x02 \x03(\v2\x1a.catalog.v1.OrderLineInputR\x05lines\"K\n" +
+	"\x05lines\x18\x02 \x03(\v2\x1a.catalog.v1.OrderLineInputR\x05lines\x12\x18\n" +
+	"\areserve\x18\x03 \x01(\bR\areserve\x12\x19\n" +
+	"\border_id\x18\x04 \x01(\tR\aorderId\x12\x1f\n" +
+	"\vcoupon_code\x18\x05 \x01(\tR\n" +
+	"couponCode\"K\n" +
 	"\x0eOrderLineInput\x12\x1d\n" +
 	"\n" +
 	"product_id\x18\x01 \x01(\tR\tproductId\x12\x1a\n" +
-	"\bquantity\x18\x02 \x01(\x05R\bquantity\"\x8c\x01\n" +
+	"\bquantity\x18\x02 \x01(\x05R\bquantity\"\xab\x01\n" +
 	"\x1aValidateOrderLinesResponse\x12\x14\n" +
 	"\x05valid\x18\x01 \x01(\bR\x05valid\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x123\n" +
-	"\x05lines\x18\x03 \x03(\v2\x1d.catalog.v1.OrderLineSnapshotR\x05lines\"\xa8\x01\n" +
+	"\x05lines\x18\x03 \x03(\v2\x1d.catalog.v1.OrderLineSnapshotR\x05lines\x12\x1d\n" +
+	"\n" +
+	"error_code\x18\x04 \x01(\tR\terrorCode\"\xd2\x01\n" +
 	"\x11OrderLineSnapshot\x12\x1d\n" +
 	"\n" +
 	"product_id\x18\x01 \x01(\tR\tproductId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
 	"\bquantity\x18\x03 \x01(\x05R\bquantity\x12(\n" +
 	"\x10unit_price_cents\x18\x04 \x01(\x03R\x0eunitPriceCents\x12\x1a\n" +
-	"\bcurrency\x18\x05 \x01(\tR\bcurrency2u\n" +
+	"\bcurrency\x18\x05 \x01(\tR\bcurrency\x12(\n" +
+	"\x10list_price_cents\x18\x06 \x01(\x03R\x0elistPriceCents\"Y\n" +
+	"\x1fReleaseOrderReservationsRequest\x12\x1b\n" +
+	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x19\n" +
+	"\border_id\x18\x02 \x01(\tR\aorderId\"\"\n" +
+	" ReleaseOrderReservationsResponse2\xec\x01\n" +
 	"\x0eCatalogService\x12c\n" +
-	"\x12ValidateOrderLines\x12%.catalog.v1.ValidateOrderLinesRequest\x1a&.catalog.v1.ValidateOrderLinesResponseB(Z&market-master/gen/catalog/v1;catalogv1b\x06proto3"
+	"\x12ValidateOrderLines\x12%.catalog.v1.ValidateOrderLinesRequest\x1a&.catalog.v1.ValidateOrderLinesResponse\x12u\n" +
+	"\x18ReleaseOrderReservations\x12+.catalog.v1.ReleaseOrderReservationsRequest\x1a,.catalog.v1.ReleaseOrderReservationsResponseB(Z&market-master/gen/catalog/v1;catalogv1b\x06proto3"
 
 var (
 	file_catalog_v1_catalog_proto_rawDescOnce sync.Once
@@ -300,20 +450,24 @@ func file_catalog_v1_catalog_proto_rawDescGZIP() []byte {
 	return file_catalog_v1_catalog_proto_rawDescData
 }
 
-var file_catalog_v1_catalog_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_catalog_v1_catalog_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_catalog_v1_catalog_proto_goTypes = []any{
-	(*ValidateOrderLinesRequest)(nil),  // 0: catalog.v1.ValidateOrderLinesRequest
-	(*OrderLineInput)(nil),             // 1: catalog.v1.OrderLineInput
-	(*ValidateOrderLinesResponse)(nil), // 2: catalog.v1.ValidateOrderLinesResponse
-	(*OrderLineSnapshot)(nil),          // 3: catalog.v1.OrderLineSnapshot
+	(*ValidateOrderLinesRequest)(nil),        // 0: catalog.v1.ValidateOrderLinesRequest
+	(*OrderLineInput)(nil),                   // 1: catalog.v1.OrderLineInput
+	(*ValidateOrderLinesResponse)(nil),       // 2: catalog.v1.ValidateOrderLinesResponse
+	(*OrderLineSnapshot)(nil),                // 3: catalog.v1.OrderLineSnapshot
+	(*ReleaseOrderReservationsRequest)(nil),  // 4: catalog.v1.ReleaseOrderReservationsRequest
+	(*ReleaseOrderReservationsResponse)(nil), // 5: catalog.v1.ReleaseOrderReservationsResponse
 }
 var file_catalog_v1_catalog_proto_depIdxs = []int32{
 	1, // 0: catalog.v1.ValidateOrderLinesRequest.lines:type_name -> catalog.v1.OrderLineInput
 	3, // 1: catalog.v1.ValidateOrderLinesResponse.lines:type_name -> catalog.v1.OrderLineSnapshot
 	0, // 2: catalog.v1.CatalogService.ValidateOrderLines:input_type -> catalog.v1.ValidateOrderLinesRequest
-	2, // 3: catalog.v1.CatalogService.ValidateOrderLines:output_type -> catalog.v1.ValidateOrderLinesResponse
-	3, // [3:4] is the sub-list for method output_type
-	2, // [2:3] is the sub-list for method input_type
+	4, // 3: catalog.v1.CatalogService.ReleaseOrderReservations:input_type -> catalog.v1.ReleaseOrderReservationsRequest
+	2, // 4: catalog.v1.CatalogService.ValidateOrderLines:output_type -> catalog.v1.ValidateOrderLinesResponse
+	5, // 5: catalog.v1.CatalogService.ReleaseOrderReservations:output_type -> catalog.v1.ReleaseOrderReservationsResponse
+	4, // [4:6] is the sub-list for method output_type
+	2, // [2:4] is the sub-list for method input_type
 	2, // [2:2] is the sub-list for extension type_name
 	2, // [2:2] is the sub-list for extension extendee
 	0, // [0:2] is the sub-list for field type_name
@@ -330,7 +484,7 @@ func file_catalog_v1_catalog_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_catalog_v1_catalog_proto_rawDesc), len(file_catalog_v1_catalog_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -1,4 +1,5 @@
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import {
   ShoppingCart,
   Package,
@@ -7,8 +8,12 @@ import {
   Store,
   Globe,
   Sprout,
+  Tag,
   User as UserIcon,
 } from 'lucide-react'
+import { request } from '@/lib/api'
+import type { Campaign } from '@/lib/types'
+import { formatDate, formatRule } from '@/lib/format'
 import { useAuth } from '@/lib/auth'
 import { useCart } from '@/lib/cart'
 import { activeSlug, slugFromHost } from '@/lib/tenant'
@@ -21,6 +26,14 @@ export function ShopLayout() {
   const navigate = useNavigate()
   const hostSlug = slugFromHost()
   const slug = activeSlug()
+
+  // Live, non-code campaigns for this market → the sale banner.
+  const campaigns = useQuery({
+    queryKey: ['active-campaigns'],
+    queryFn: () => request<{ campaigns: Campaign[] }>('/v1/campaigns/active'),
+    refetchInterval: 60_000,
+  })
+  const live = campaigns.data?.campaigns ?? []
 
   const navCls = ({ isActive }: { isActive: boolean }) =>
     cn(
@@ -112,6 +125,24 @@ export function ShopLayout() {
           </div>
         </div>
       </header>
+
+      {live.length > 0 && (
+        <div className="border-b border-brand-200 bg-brand-600 text-white">
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-center gap-x-4 gap-y-1 px-4 py-2 text-center text-xs font-medium sm:text-sm">
+            {live.map((c) => (
+              <span key={c.id} className="inline-flex items-center gap-1.5">
+                <Tag className="size-3.5 shrink-0" />
+                <span>
+                  {c.name} — {formatRule(c.rule_type, c.rule_value)}
+                </span>
+                <span className="hidden text-brand-100 sm:inline">
+                  ends {formatDate(c.ends_at)}
+                </span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       <main className="mx-auto max-w-6xl px-4 py-8">
         <Outlet />

@@ -39,6 +39,8 @@ func main() {
 			"/v1/me":               conf.Get("IDENTITY_HTTP_ADDR", "localhost:8081"),
 			"/v1/categories":       conf.Get("CATALOG_HTTP_ADDR", "localhost:8082"),
 			"/v1/products":         conf.Get("CATALOG_HTTP_ADDR", "localhost:8082"),
+			"/v1/campaigns":        conf.Get("CATALOG_HTTP_ADDR", "localhost:8082"),
+			"/v1/inventory":        conf.Get("CATALOG_HTTP_ADDR", "localhost:8082"),
 			"/v1/orders":           conf.Get("ORDER_HTTP_ADDR", "localhost:8083"),
 			"/v1/payments":         conf.Get("PAYMENT_HTTP_ADDR", "localhost:8084"),
 			"/v1/psp/":             conf.Get("PAYMENT_HTTP_ADDR", "localhost:8084"),
