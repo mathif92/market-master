@@ -47,6 +47,12 @@ func TestIsPublic(t *testing.T) {
 		{http.MethodGet, "/v1/orders", false},
 		{http.MethodGet, "/v1/me", false},
 		{http.MethodGet, "/v1/shipments", false},
+		// platform control plane always needs a JWT
+		{http.MethodGet, "/v1/tenants", false},
+		{http.MethodPatch, "/v1/tenants/123", false},
+		{http.MethodGet, "/v1/platform/users", false},
+		{http.MethodPost, "/v1/platform/users", false},
+		{http.MethodPatch, "/v1/platform/users/123", false},
 	}
 	for _, c := range cases {
 		if got := isPublic(c.method, c.path); got != c.want {
@@ -59,10 +65,28 @@ func TestIsTenantScopedPath(t *testing.T) {
 	if isTenantScopedPath("/v1/auth/login") {
 		t.Error("auth routes must work without a resolved market")
 	}
-	if isTenantScopedPath("/v1/tenants") {
-		t.Error("bootstrap endpoint must work without a resolved market")
+	if isTenantScopedPath("/v1/tenants") || isTenantScopedPath("/v1/tenants/123") {
+		t.Error("tenant lifecycle routes must work without a resolved market")
+	}
+	if isTenantScopedPath("/v1/platform/users") {
+		t.Error("platform routes must work without a resolved market")
 	}
 	if !isTenantScopedPath("/v1/orders") {
 		t.Error("orders require a resolved market")
+	}
+}
+
+func TestPathExemptFromMarket(t *testing.T) {
+	exempt := []string{"/v1/tenants", "/v1/tenants/123", "/v1/platform/users"}
+	for _, p := range exempt {
+		if !pathExemptFromMarket(p) {
+			t.Errorf("pathExemptFromMarket(%q) = false, want true", p)
+		}
+	}
+	blocked := []string{"/v1/auth/login", "/v1/orders", "/v1/products", "/v1/me"}
+	for _, p := range blocked {
+		if pathExemptFromMarket(p) {
+			t.Errorf("pathExemptFromMarket(%q) = true, want false", p)
+		}
 	}
 }

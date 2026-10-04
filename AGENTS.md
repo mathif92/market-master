@@ -102,7 +102,8 @@ partition count (12).
   routing rules) — run with `make test`.
 - The full integration path is `make smoke` against the compose stack.
   It asserts idempotent replay, paid→dispatched→delivered, declined card,
-  and cancellation.
+  cancellation, plus platform flows (market list/role gating,
+  suspend→reactivate, platform-admin invite + disable).
 - When adding a consumer: cover replay (same event twice) and an
   illegal-transition case.
 - Web app: `make web-build` (strict tsc + vite) and `make web-lint`

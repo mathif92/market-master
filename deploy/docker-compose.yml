@@ -82,6 +82,10 @@ services:
       ADDR: ":8081"
       GRPC_ADDR: ":9081"
       DATABASE_URL: postgres://market:market@postgres:5432/identity?sslmode=disable
+      # First platform admin, idempotent on startup (more can be invited
+      # from the /platform panel). Override via shell env for real deploys.
+      PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-platform@market.test}
+      PLATFORM_ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:-platform12345}
     ports: ["18081:8081", "9081:9081"]
 
   catalog:
@@ -152,6 +156,8 @@ services:
       ORDER_HTTP_ADDR: order:8083
       PAYMENT_HTTP_ADDR: payment:8084
       LOGISTICS_HTTP_ADDR: logistics:8085
+      # fast invalidation locally so suspend/reactivate is visible quickly
+      TENANT_CACHE_TTL: 2s
     ports: ["8080:8080"]
     depends_on:
       postgres:

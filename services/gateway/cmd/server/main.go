@@ -18,11 +18,23 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	ttl := time.Minute
+	if v := conf.Get("TENANT_CACHE_TTL", "60s"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			log.Warn("invalid TENANT_CACHE_TTL, using 60s", "value", v)
+		} else {
+			ttl = d
+		}
+	}
+
 	gw, err := proxy.New(proxy.Config{
-		IdentityGRPC: conf.Get("IDENTITY_GRPC_ADDR", "localhost:9081"),
+		IdentityGRPC:   conf.Get("IDENTITY_GRPC_ADDR", "localhost:9081"),
+		TenantCacheTTL: ttl,
 		Routes: map[string]string{
 			"/v1/tenants":          conf.Get("IDENTITY_HTTP_ADDR", "localhost:8081"),
 			"/v1/auth/":            conf.Get("IDENTITY_HTTP_ADDR", "localhost:8081"),
+			"/v1/platform/":        conf.Get("IDENTITY_HTTP_ADDR", "localhost:8081"),
 			"/v1/users":            conf.Get("IDENTITY_HTTP_ADDR", "localhost:8081"),
 			"/v1/me":               conf.Get("IDENTITY_HTTP_ADDR", "localhost:8081"),
 			"/v1/categories":       conf.Get("CATALOG_HTTP_ADDR", "localhost:8082"),

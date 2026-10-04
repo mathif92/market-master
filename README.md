@@ -39,9 +39,10 @@ make down    # tear down (incl. volumes)
 
 ## Web app (React)
 
-Single SPA in `web/` — customer storefront (`/`) + market admin (`/admin`,
-requires `tenant_admin`/`staff`). Vite + React 19 + TS + Tailwind v4 +
-TanStack Query, shadcn-style UI on Radix.
+Single SPA in `web/` — customer storefront (`/`), market admin (`/admin`,
+requires `tenant_admin`/`staff`) and platform panel (`/platform`, requires
+`platform_admin`). Vite + React 19 + TS + Tailwind v4 + TanStack Query,
+shadcn-style UI on Radix.
 
 ```bash
 cd web && npm install
@@ -61,6 +62,11 @@ Market resolution: `demo.localhost:5173` works out of the box; on plain
 - **Admin**: dashboard (revenue/orders/in-transit), product & category CRUD,
   all-orders table + detail (cancel, mark delivered), shipments,
   shipping methods, users.
+- **Sign up**: `/signup` ("Start selling" in the header) creates a new
+  market + its first admin and drops you straight into that market's
+  `/admin`.
+- **Platform**: `/platform` — list all markets, suspend/activate them,
+  invite/disable platform admins.
 - Test cards in checkout: `tok_visa_ok` approves, `tok_visa_decline`
   declines (any token containing `decline` fails).
 
@@ -92,6 +98,41 @@ ADDR=:8083 DATABASE_URL=... JWT_SECRET=dev JWT KAFKA_BROKERS=localhost:9092 \
 
 **REST at the edge, gRPC between services** (buf-managed, `api/proto/`,
 generated into `gen/` — `make proto`).
+
+## Platform admins & self-serve signup
+
+Roles: `platform_admin` (cross-market control plane), `tenant_admin`,
+`staff`, `customer`.
+
+- **Self-serve signup**: `POST /v1/tenants` is public — anyone can create
+  their own market (slug, name, admin email/password), or use `/signup` in
+  the web app, which auto-logs the new admin into their market.
+  *Known v1 gap: no rate limiting/CAPTCHA on public signup.*
+- **First platform admin** is bootstrapped at identity startup from env
+  `PLATFORM_ADMIN_EMAIL` + `PLATFORM_ADMIN_PASSWORD` (≥8 chars, idempotent).
+  Compose dev default: `platform@market.test` / `platform12345`.
+- **Platform endpoints** (JWT with role `platform_admin`, empty `tid` —
+  bypasses tenant matching by design):
+
+  ```bash
+  # platform login (note the empty tenant_slug)
+  PTOKEN=$(curl -s -X POST localhost:8080/v1/auth/login \
+    -d '{"tenant_slug":"","email":"platform@market.test","password":"platform12345"}' \
+    | jq -r .access_token)
+  PAUTH="Authorization: Bearer $PTOKEN"
+
+  curl -H "$PAUTH" localhost:8080/v1/tenants                 # list markets
+  curl -H "$PAUTH" -X PATCH localhost:8080/v1/tenants/<id> \
+    -d '{"status":"suspended"}'                               # suspend/activate
+  curl -H "$PAUTH" localhost:8080/v1/platform/users           # list admins
+  curl -H "$PAUTH" -X POST localhost:8080/v1/platform/users \
+    -d '{"email":"ops@x.io","password":"another-pass"}'       # invite admin
+  curl -H "$PAUTH" -X PATCH localhost:8080/v1/platform/users/<id> \
+    -d '{"status":"disabled"}'                                # disable admin
+  ```
+
+  A suspended market returns `403 market_suspended` for its storefront;
+  `/v1/tenants*` and `/v1/platform/*` keep working so it can be reactivated.
 
 ## API walkthrough (curl)
 

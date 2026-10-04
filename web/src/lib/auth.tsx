@@ -11,6 +11,7 @@ interface AuthState {
   register(email: string, password: string): Promise<User>
   logout(): void
   isStaff: boolean
+  isPlatformAdmin: boolean
 }
 
 const AuthContext = createContext<AuthState | null>(null)
@@ -90,6 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       register,
       logout,
       isStaff: isStaffRole(session?.user?.role),
+      isPlatformAdmin: session?.user?.role === 'platform_admin',
     }),
     [session, refreshing, login, register, logout],
   )

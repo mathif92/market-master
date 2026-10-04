@@ -30,6 +30,9 @@ type Config struct {
 	Routes    map[string]string
 	JWTSecret string
 	Logger    *slog.Logger
+	// TenantCacheTTL is how long resolved market info (incl. suspension
+	// status) is cached. 0 means 60s.
+	TenantCacheTTL time.Duration
 }
 
 type tenantInfo struct {
@@ -50,6 +53,7 @@ type Gateway struct {
 
 	mu      sync.Mutex
 	cache   map[string]tenantInfo
+	ttl     time.Duration
 	routes  []route // sorted longest-prefix first
 	proxies map[string]*httputil.ReverseProxy
 }
@@ -85,11 +89,16 @@ func New(cfg Config) (*Gateway, error) {
 	// longest prefix first → most specific route wins
 	sort.Slice(routes, func(i, j int) bool { return len(routes[i].prefix) > len(routes[j].prefix) })
 
+	ttl := cfg.TenantCacheTTL
+	if ttl <= 0 {
+		ttl = 60 * time.Second
+	}
 	return &Gateway{
 		identity: identityv1.NewIdentityServiceClient(conn),
 		signer:   authn.NewSigner(cfg.JWTSecret, time.Hour),
 		log:      cfg.Logger,
 		cache:    map[string]tenantInfo{},
+		ttl:      ttl,
 		routes:   routes,
 		proxies:  proxies,
 	}, nil
@@ -114,7 +123,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				g.fail(w, http.StatusNotFound, "unknown_market", "no market for this host")
 				return
 			}
-		} else if info.status != "active" {
+		} else if !pathExemptFromMarket(r.URL.Path) && info.status != "active" {
+			// Suspension never blocks platform/bootstrap paths: a suspended
+			// market must still be reachable for reactivation and signup.
 			g.fail(w, http.StatusForbidden, "market_suspended", "this market is suspended")
 			return
 		} else {
@@ -181,7 +192,7 @@ func (g *Gateway) resolveTenant(ctx context.Context, slug string, skipNegative b
 		return tenantInfo{}, false, err
 	}
 	t := resp.GetTenant()
-	info := tenantInfo{id: t.GetId(), status: t.GetStatus(), until: time.Now().Add(60 * time.Second)}
+	info := tenantInfo{id: t.GetId(), status: t.GetStatus(), until: time.Now().Add(g.ttl)}
 	g.cache[slug] = info
 	return info, true, nil
 }
@@ -235,10 +246,19 @@ func marketSlug(r *http.Request) string {
 }
 
 func isTenantScopedPath(path string) bool {
-	if path == "/v1/tenants" || strings.HasPrefix(path, "/v1/auth/") {
-		return false // bootstrap/login resolve the market from the body
+	if path == "/v1/tenants" || strings.HasPrefix(path, "/v1/tenants/") ||
+		strings.HasPrefix(path, "/v1/platform/") || strings.HasPrefix(path, "/v1/auth/") {
+		return false // bootstrap/login/platform resolve the market from the body
 	}
 	return true
+}
+
+// pathExemptFromMarket lists paths that work even when the market resolved
+// from the host is suspended (market lifecycle + platform control plane).
+func pathExemptFromMarket(path string) bool {
+	return path == "/v1/tenants" ||
+		strings.HasPrefix(path, "/v1/tenants/") ||
+		strings.HasPrefix(path, "/v1/platform/")
 }
 
 // isPublic lists endpoints reachable without a JWT.

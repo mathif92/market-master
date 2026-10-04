@@ -48,6 +48,30 @@ func main() {
 	}
 
 	st := store.New(pool)
+
+	// First platform admin comes from env; more are invited from the panel.
+	if email := conf.Get("PLATFORM_ADMIN_EMAIL", ""); email != "" {
+		pw := conf.Get("PLATFORM_ADMIN_PASSWORD", "")
+		switch {
+		case len(pw) < 8:
+			log.Warn("PLATFORM_ADMIN_PASSWORD must be >= 8 chars, skipping platform admin bootstrap")
+		default:
+			hash, herr := store.HashPassword(pw)
+			if herr != nil {
+				log.Error("platform admin hash", "err", herr)
+				os.Exit(1)
+			}
+			created, aerr := st.EnsurePlatformAdmin(ctx, email, hash)
+			if aerr != nil {
+				log.Error("platform admin bootstrap", "err", aerr)
+				os.Exit(1)
+			}
+			if created {
+				log.Info("platform admin bootstrapped", "email", email)
+			}
+		}
+	}
+
 	signer := authn.NewSigner(conf.MustGet("JWT_SECRET"), time.Hour)
 	idem := idempotency.NewStore(pool, 30*time.Second)
 	srv := api.NewServer(st, signer, idem, log)

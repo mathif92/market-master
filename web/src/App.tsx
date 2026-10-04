@@ -1,9 +1,12 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './lib/auth'
+import type { Role } from './lib/types'
 import { ShopLayout } from './layouts/ShopLayout'
 import { AdminLayout } from './layouts/AdminLayout'
+import { PlatformLayout } from './layouts/PlatformLayout'
 import { LoginPage } from './pages/auth/LoginPage'
 import { RegisterPage } from './pages/auth/RegisterPage'
+import { SignupPage } from './pages/auth/SignupPage'
 import { CatalogPage } from './pages/shop/CatalogPage'
 import { ProductPage } from './pages/shop/ProductPage'
 import { CartPage } from './pages/shop/CartPage'
@@ -17,13 +20,24 @@ import { AdminOrderDetailPage } from './pages/admin/AdminOrderDetailPage'
 import { AdminShipmentsPage } from './pages/admin/AdminShipmentsPage'
 import { AdminShippingMethodsPage } from './pages/admin/AdminShippingMethodsPage'
 import { AdminUsersPage } from './pages/admin/AdminUsersPage'
+import { MarketsPage } from './pages/platform/MarketsPage'
+import { PlatformUsersPage } from './pages/platform/PlatformUsersPage'
 
-function RequireAuth({ children, staff }: { children: React.ReactNode; staff?: boolean }) {
+function RequireAuth({
+  children,
+  staff,
+  role,
+}: {
+  children: React.ReactNode
+  staff?: boolean
+  role?: Role
+}) {
   const { user, loading, isStaff } = useAuth()
   const location = useLocation()
   if (loading) return null
   if (!user) return <Navigate to="/login" state={{ from: location.pathname }} replace />
   if (staff && !isStaff) return <Navigate to="/" replace />
+  if (role && user.role !== role) return <Navigate to="/" replace />
   return <>{children}</>
 }
 
@@ -36,6 +50,7 @@ export default function App() {
         <Route path="/cart" element={<CartPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
+        <Route path="/signup" element={<SignupPage />} />
         <Route
           path="/checkout"
           element={
@@ -77,6 +92,18 @@ export default function App() {
         <Route path="shipments" element={<AdminShipmentsPage />} />
         <Route path="shipping-methods" element={<AdminShippingMethodsPage />} />
         <Route path="users" element={<AdminUsersPage />} />
+      </Route>
+
+      <Route
+        path="/platform"
+        element={
+          <RequireAuth role="platform_admin">
+            <PlatformLayout />
+          </RequireAuth>
+        }
+      >
+        <Route index element={<MarketsPage />} />
+        <Route path="users" element={<PlatformUsersPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -115,6 +115,15 @@ export interface User {
   email: string
   role: Role
   status: string
+  created_at?: string
+}
+
+export interface Tenant {
+  id: string
+  slug: string
+  name: string
+  status: 'active' | 'suspended'
+  created_at: string
 }
 
 export interface TokenResponse {

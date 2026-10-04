@@ -54,6 +54,20 @@ func (s *Server) Router() http.Handler {
 		r.With(authn.RequireRole(authn.RoleTenantAdmin)).
 			Post("/v1/users", s.createUser)
 	})
+
+	// Platform control plane: market and platform-admin management. No
+	// tenant middleware — these endpoints are deliberately tenant-agnostic.
+	r.Group(func(r chi.Router) {
+		r.Use(s.signer.Middleware)
+		r.Use(authn.RequireRole(authn.RolePlatformAdmin))
+
+		r.Get("/v1/tenants", s.listTenants)
+		r.Patch("/v1/tenants/{id}", s.patchTenantStatus)
+		r.Get("/v1/platform/users", s.listPlatformUsers)
+		r.With(s.idem.Middleware("identity.create_platform_user", false)).
+			Post("/v1/platform/users", s.createPlatformUser)
+		r.Patch("/v1/platform/users/{id}", s.patchPlatformUserStatus)
+	})
 	return r
 }
 
@@ -147,14 +161,18 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	tenantID := ""
 	if req.TenantSlug != "" {
-		t, err := s.store.GetTenantBySlug(r.Context(), req.TenantSlug)
-		if err != nil || t.Status != "active" {
-			httpx.Err(w, http.StatusUnauthorized, "invalid_credentials", "invalid credentials")
-			return
+		if t, err := s.store.GetTenantBySlug(r.Context(), req.TenantSlug); err == nil && t.Status == "active" {
+			tenantID = t.ID
 		}
-		tenantID = t.ID
+		// unknown or suspended market: fall through so platform admins can
+		// still sign in; market members get the usual 401 below.
 	}
 	u, hash, err := s.store.GetUserByEmail(r.Context(), tenantID, req.Email)
+	if tenantID != "" && errors.Is(err, store.ErrNotFound) {
+		// Platform admins are market-agnostic: retry without a tenant when
+		// the address is not a member of the requested market.
+		u, hash, err = s.store.GetUserByEmail(r.Context(), "", req.Email)
+	}
 	if err != nil || !store.CheckPassword(hash, req.Password) || u.Status != "active" {
 		httpx.Err(w, http.StatusUnauthorized, "invalid_credentials", "invalid credentials")
 		return
@@ -277,6 +295,129 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, u)
+}
+
+func (s *Server) listTenants(w http.ResponseWriter, r *http.Request) {
+	tenants, err := s.store.ListTenants(r.Context())
+	if err != nil {
+		httpx.Internal(w, err)
+		return
+	}
+	if tenants == nil {
+		tenants = []store.Tenant{}
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"tenants": tenants})
+}
+
+func (s *Server) patchTenantStatus(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Err(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	if req.Status != "active" && req.Status != "suspended" {
+		httpx.Err(w, http.StatusBadRequest, "invalid_status", "status must be active or suspended")
+		return
+	}
+	t, err := s.store.UpdateTenantStatus(r.Context(), chi.URLParam(r, "id"), req.Status)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			httpx.Err(w, http.StatusNotFound, "not_found", "unknown market")
+			return
+		}
+		httpx.Internal(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, t)
+}
+
+func (s *Server) listPlatformUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := s.store.ListPlatformUsers(r.Context())
+	if err != nil {
+		httpx.Internal(w, err)
+		return
+	}
+	if users == nil {
+		users = []store.User{}
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"users": users})
+}
+
+func (s *Server) createPlatformUser(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Err(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	if req.Email == "" {
+		httpx.Err(w, http.StatusBadRequest, "invalid_email", "email is required")
+		return
+	}
+	if len(req.Password) < 8 {
+		httpx.Err(w, http.StatusBadRequest, "weak_password", "password must be at least 8 characters")
+		return
+	}
+	hash, err := store.HashPassword(req.Password)
+	if err != nil {
+		httpx.Internal(w, err)
+		return
+	}
+	resv := idempotency.From(r.Context())
+	u, err := s.store.CreatePlatformUser(r.Context(), req.Email, hash,
+		func(tx pgx.Tx, u store.User) error {
+			if resv == nil {
+				return nil
+			}
+			body, merr := json.Marshal(u)
+			if merr != nil {
+				return merr
+			}
+			return resv.CompleteInTx(r.Context(), tx, http.StatusCreated, body)
+		})
+	if err != nil {
+		if errors.Is(err, store.ErrEmailTaken) {
+			httpx.Err(w, http.StatusConflict, "email_taken", "email already registered")
+			return
+		}
+		httpx.Internal(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusCreated, u)
+}
+
+func (s *Server) patchPlatformUserStatus(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := httpx.Decode(r, &req); err != nil {
+		httpx.Err(w, http.StatusBadRequest, "invalid_json", err.Error())
+		return
+	}
+	if req.Status != "active" && req.Status != "disabled" {
+		httpx.Err(w, http.StatusBadRequest, "invalid_status", "status must be active or disabled")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	claims, _ := authn.ClaimsFrom(r.Context())
+	if req.Status == "disabled" && claims != nil && claims.Subject == id {
+		httpx.Err(w, http.StatusBadRequest, "self_disable", "you cannot disable your own account")
+		return
+	}
+	u, err := s.store.UpdatePlatformUserStatus(r.Context(), id, req.Status)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			httpx.Err(w, http.StatusNotFound, "not_found", "unknown platform user")
+			return
+		}
+		httpx.Internal(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, u)
 }
 
 func (s *Server) writeTokens(w http.ResponseWriter, u store.User) {

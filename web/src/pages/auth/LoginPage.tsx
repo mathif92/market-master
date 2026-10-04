@@ -25,10 +25,11 @@ export function LoginPage() {
     setError('')
     setBusy(true)
     try {
-      if (!hostSlug && slug) setStoredSlug(slug.trim())
-      await login(hostSlug || slug.trim(), email, password)
+      if (!hostSlug) setStoredSlug(slug.trim()) // clearing the field clears the override
+      const u = await login(hostSlug || slug.trim(), email, password)
       const from = (location.state as { from?: string } | null)?.from
-      navigate(from && from !== '/login' ? from : '/', { replace: true })
+      const fallback = u.role === 'platform_admin' ? '/platform' : '/'
+      navigate(from && from !== '/login' ? from : fallback, { replace: true })
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Sign in failed')
     } finally {
@@ -88,6 +89,12 @@ export function LoginPage() {
               No account?{' '}
               <Link to="/register" className="font-medium text-brand-600 hover:underline">
                 Create one
+              </Link>
+            </p>
+            <p className="text-center text-sm text-slate-500">
+              Want to sell on the platform?{' '}
+              <Link to="/signup" className="font-medium text-brand-600 hover:underline">
+                Create your market
               </Link>
             </p>
           </form>

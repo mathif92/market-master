@@ -1,5 +1,14 @@
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
-import { ShoppingCart, Package, LayoutDashboard, LogOut, Store, User as UserIcon } from 'lucide-react'
+import {
+  ShoppingCart,
+  Package,
+  LayoutDashboard,
+  LogOut,
+  Store,
+  Globe,
+  Sprout,
+  User as UserIcon,
+} from 'lucide-react'
 import { useAuth } from '@/lib/auth'
 import { useCart } from '@/lib/cart'
 import { activeSlug, slugFromHost } from '@/lib/tenant'
@@ -7,7 +16,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/cn'
 
 export function ShopLayout() {
-  const { user, logout, isStaff } = useAuth()
+  const { user, logout, isStaff, isPlatformAdmin } = useAuth()
   const { count } = useCart()
   const navigate = useNavigate()
   const hostSlug = slugFromHost()
@@ -49,6 +58,14 @@ export function ShopLayout() {
                 <LayoutDashboard className="size-4" /> Admin
               </NavLink>
             )}
+            {isPlatformAdmin && (
+              <NavLink to="/platform" className={navCls}>
+                <Globe className="size-4" /> Platform
+              </NavLink>
+            )}
+            <NavLink to="/signup" className={navCls}>
+              <Sprout className="size-4" /> Start selling
+            </NavLink>
           </nav>
 
           <div className="ml-auto flex items-center gap-2">
